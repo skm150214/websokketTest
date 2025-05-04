@@ -4,7 +4,7 @@ import sys
 import math
 import time
 import random
-from PIL import Image, ImageFilter
+#from PIL import Image, ImageFilter
 import websockets
 import asyncio
 import threading
@@ -46,21 +46,77 @@ ismousedown=False
 NamePopup = True
 pulseRed = 0
 ofSenPData = False
+global Connected
+#Connected = False
 Name = ""
 returnData = ()
 global packetData
 packetData = ""
 response = ""
+otherPlayer = []
+packetData = ""
+uri = "ws://localhost:8765"
+class FireAndForgetWebSocketClient:
+    def __init__(self, uri):
+        self.uri = uri
+        self.websocket = None
+        self.connected = asyncio.Event()
+        self.send_queue = asyncio.Queue()
+
+    async def connect(self):
+        while True:
+            try:
+                print("Connecting to server...")
+                self.websocket = await websockets.connect(self.uri)
+                self.connected.set()
+                print("Connected to server.")
+                asyncio.create_task(self.listen())
+                asyncio.create_task(self.process_send_queue())
+                break
+            except Exception as e:
+                print(f"Connection failed: {e}, retrying in 2s...")
+                await asyncio.sleep(2)
+
+    async def listen(self):
+        global packetData
+        try:
+            async for message in self.websocket:
+                print(f"[RECEIVED]: {message}")
+                packetData = message
+        except Exception as e:
+            print(f"Listen error: {e}")
+        finally:
+            self.connected.clear()
+            await self.connect()
+
+    async def process_send_queue(self):
+        while True:
+            await self.connected.wait()
+            packet = await self.send_queue.get()
+            try:
+                await self.websocket.send(packet)
+                print(f"[SENT]: {packet}")
+            except Exception as e:
+                print(f"Send failed: {e}")
+
+    async def send(self, packet):
+        await self.send_queue.put(packet)
+
+client = FireAndForgetWebSocketClient(uri)
+
 async def sendPacket(packet):
-    global packetData
-    uri = "ws://localhost:8765"
-    async with websockets.connect(uri) as websocket:
-        await websocket.send(packet)
-        response = await websocket.recv()
-        print(len(response))
-        if len(response) > 2:packetData = str(response)
-        #print(packetData)
-    return packetData
+    await client.send(packet)
+
+def startLoop(loop):
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+loop = asyncio.new_event_loop()
+threading.Thread(target=startLoop, args=(loop,), daemon=True).start()
+#asyncio.run_coroutine_threadsafe(client.connect(), loop)
+
+def runAsync(coro):
+    return asyncio.run_coroutine_threadsafe(coro, loop)
 #blurRect = pygame.Rect(0,0,800,500)
 #blurSubsurface = screen.subsurface(blurRect).copy()
 #bgBlur = pygame.image.fromstring(
@@ -72,20 +128,49 @@ smallRocksPos = [(100,100)]
 StartTime = time.time()
 print(StartTime)
 
-def startLoop(loop):
-    asyncio.set_event_loop(loop)
-    loop.run_forever()
-loop = asyncio.new_event_loop()
-threading.Thread(target=startLoop, args=(loop,), daemon=True).start()
-def runAsync(coroutine):
-    asyncio.run_coroutine_threadsafe(coroutine, loop)
+#def startLoop(loop):
+#    asyncio.set_event_loop(loop)
+#    loop.run_forever()
+#loop = asyncio.new_event_loop()
+#threading.Thread(target=startLoop, args=(loop,), daemon=True).start()
+#def runAsync(coroutine):
+#    asyncio.run_coroutine_threadsafe(coroutine, loop)
 #global packetPlayerName
 #global packetPlayerX
 #global packetPlayerY
 #global packetPlayerState
 #global packetPlayerSubState
 #global packetPlayerHasRock #= False
+rockPopID = ""
+rockAddX = ""
+rockAddY = ""
 
+def clearPDataByName(name):
+    for i in range(len(otherPlayer)):
+        if otherPlayer[i][0] == name:
+            return int(i)
+            
+def deobfPacketDataRock(data):
+    idx = 5
+    rockPopID = ""
+    rockAddX = ""
+    rockAddY = ""
+    if data[3] =="p":
+        while data[idx] != ";":
+            print(idx)
+            rockPopID += data[idx]
+            idx += 1
+        
+        return rockPopID
+    if data[3] =="a":
+        while data[idx] != ",":
+            rockAddX += data[idx]
+            idx += 1
+        idx += 1
+        while data[idx] != ";":
+            rockAddY += data[idx]
+            idx += 1
+        return (rockAddX,rockAddY)
 packetPlayerName = ""
 packetPlayerX = ""
 packetPlayerY = ""
@@ -146,6 +231,7 @@ def isANameChar(char):
     else:return False
 #pressedKey = ""
 #screen = pygame.transform.grayscale(screen)
+asyncio.run_coroutine_threadsafe(client.connect(), loop)
 while NamePopup:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -172,9 +258,29 @@ while NamePopup:
     if pulseRed <=1:pulseRed = 0
     pygame.display.flip()
     clock.tick(60)
+
 runAsync(sendPacket("{n;"+Name+"}"))
 runAsync(sendPacket("{n;req"))
-while packetData == "successfullyAddedName" or packetData == "0":
+#asyncio.run_coroutine_threadsafe(client.connect(), loop)
+#runAsync(sendPacket("{n;"+Name+"}"))
+#runAsync(sendPacket("{n;req"))
+while False:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            sys.exit()
+    screen.fill("#2edf3e")
+    for i in range(13):
+        for j in range(8):
+            screen.blit(grassImg, ((i*64),(j*64)))
+    #doBlur(4)
+    #screen.blit(bgBlur, blurRect.topleft)
+    screen.blit(font.render("waiting for server", True, "#000000"), (0,0))
+    print(client.Connected)
+    pygame.display.flip()
+    clock.tick(60)
+
+#while packetData == "successfullyAddedName" or packetData == "0":
+while packetData == "a":
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             sys.exit()
@@ -201,7 +307,7 @@ while True:
                 print(smallRocksPos)
                 haveRock = False
                 ismousedown = False
-                runAsync(sendPacket("{r;a;"+str((posX+(48*lastXMove),posY+(48*lastYMove)))+"}"))
+                runAsync(sendPacket("{r;a;"+str(posX+(48*lastXMove))+","+str(posY+(48*lastYMove))+";}"))
         if event.type == pygame.MOUSEBUTTONUP:
             ismousedown=False
     screen.fill("#2edf3e")
@@ -264,7 +370,7 @@ while True:
                 smallRocksPos.pop(i) 
                 print(smallRocksPos)
                 haveRock = True 
-                runAsync(sendPacket("{r;p;"+str(i)+"}"))
+                runAsync(sendPacket("{r;p;"+str(i)+";}"))
                 break
     if time.time() - StartTime >= 2 and iconState < 2:
         StartTime = time.time()
@@ -273,11 +379,29 @@ while True:
         #runAsync(sendPacket("{p;p;"+str(i)+"}"))
     #print("packetData"[:-(len("packetData")-3)])
     #print(packetData)
-    if packetData[:-(len(packetData)-3)] == "{p;":print("adasd")
+    #if packetData[:-(len(packetData)-3)] == "{p;":print("adasd")
     if packetData[:-(len(packetData)-3)] == "{p;":
         returnData = deobfPacketDataPlayer(packetData)
-        print("playerX:"+returnData[1])
-        print("playerY:"+returnData[2])
-        screen.blit(happy1Img, (int(returnData[1]),int(returnData[2])))
+        print(returnData)
+        print(returnData[0])
+        print(clearPDataByName(returnData[0]))
+        otherPlayer[int(clearPDataByName(returnData[0]))] = str((returnData[0],int(returnData[1]),int(returnData[2]),int(returnData[3]),int(returnData[4]),returnData[5],0))
+    #    print("playerX:"+returnData[1])
+    #    print("playerY:"+returnData[2])
+    #    screen.blit(happy1Img, (int(returnData[1]),int(returnData[2])))
+    if packetData[:-(len(packetData)-3)] == "{r;":
+        returnData = deobfPacketDataRock(packetData)
+        if packetData[3]=="p":
+            smallRocksPos.pop(int(returnData[0]))
+            packetData = "" #clear cuz useless
+        else:
+            print("invalid quoteunquote:"+str(returnData[0])+", "+str(returnData[1]))
+            smallRocksPos.append((int(returnData[0]),int(returnData[1])))
+            packetData = "" #clear cuz useless
+
+    for i in range(len(otherPlayer)):
+        print("len "+str(len(otherPlayer)))
+        print("lenF "+str(otherPlayer))
+        screen.blit(happy1Img, (otherPlayer[i+1][1],otherPlayer[i+1][2]))
     pygame.display.flip()
     clock.tick(60)
